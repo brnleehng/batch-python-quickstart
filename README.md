@@ -1,24 +1,11 @@
----
-services: batch, storage
-platforms: python
-author: dlepow
----
+# Azure Batch Python KeyVault Integration
 
-# Azure Batch Python Quickstart
-
-A basic Python application that introduces Batch features such as pools, nodes, jobs, tasks, and interaction with Storage. Each task writes a text file to standard output.
-
-For details and explanation, see the accompanying article [Run your first Batch job with the Python API](https://docs.microsoft.com/azure/batch/quick-run-python).
+A basic Python application that uses the metadata property of the job to get information about user's keyvault. The user will then access their keyvault. This is an example of using the Batch client with token credentials.
 
 ## Prerequisites
 
 - Azure Batch account and linked general-purpose Azure Storage account
 - Python 2.7 or 3.3 or later including pip
-
-## Resources
-
-- [Azure Batch documentation](https://docs.microsoft.com/azure/batch/)
-- [Azure Batch code samples](https://github.com/Azure/azure-batch-samples)
 
 ## Project code of conduct
 

@@ -29,12 +29,26 @@ _BATCH_ACCOUNT_KEY = ''
 _BATCH_ACCOUNT_URL = ''
 _STORAGE_ACCOUNT_NAME = ''
 _STORAGE_ACCOUNT_KEY = ''
-_POOL_ID = 'PythonQuickstartPool'
+
+_AZURE_TENANT_ID = ""
+_AZURE_SUBSCRIPTION_ID = ""
+_AZURE_CLIENT_ID = ""
+_AZURE_CLIENT_OID = ""
+_AZURE_CLIENT_SECRET= ""
+
+_AZURE_KEYVAULT_URL=""
+_AZURE_KEYVAULT_SECRET=""
+
+_POOL_ID = 'pool-demo'
 _POOL_NODE_COUNT = 2
-_POOL_VM_SIZE = 'STANDARD_A1_v2'
-_JOB_ID = 'PythonQuickstartJob'
+_POOL_VM_SIZE = 'STANDARD_D2_v2'
+_JOB_ID = 'pool-demo'
 _STANDARD_OUT_FILE_NAME = 'stdout.txt'
 
+user = batchmodels.UserIdentity(
+    auto_user=batchmodels.AutoUserSpecification(
+        elevation_level=batchmodels.ElevationLevel.admin,
+        scope=batchmodels.AutoUserScope.task))
 
 def query_yes_no(question, default="yes"):
     """
@@ -55,7 +69,7 @@ def query_yes_no(question, default="yes"):
         prompt = ' [y/N] '
     else:
         raise ValueError("Invalid default answer: '{}'".format(default))
-
+    
     while 1:
         choice = input(question + prompt).lower()
         if default and not choice:
@@ -162,21 +176,30 @@ def create_pool(batch_service_client, pool_id):
     # Marketplace image. For more information about creating pools of Linux
     # nodes, see:
     # https://azure.microsoft.com/documentation/articles/batch-linux-nodes/
-    new_pool = batch.models.PoolAddParameter(
-        id=pool_id,
-        virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
-            image_reference=batchmodels.ImageReference(
-        	        publisher="Canonical",
-        	        offer="UbuntuServer",
-        	        sku="16.04-LTS",
-        	        version="latest"
-                ),
-        node_agent_sku_id="batch.node.ubuntu 16.04"),
-        vm_size=_POOL_VM_SIZE,
-        target_dedicated_nodes=_POOL_NODE_COUNT
-    )
-    batch_service_client.pool.add(new_pool)
-    
+
+    try:
+        new_pool = batch.models.PoolAddParameter(
+            id=pool_id,
+            virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
+                image_reference=batchmodels.ImageReference(
+                        publisher="Canonical",
+                        offer="UbuntuServer",
+                        sku="16.04-LTS",
+                        version="latest"
+                    ),
+            node_agent_sku_id="batch.node.ubuntu 16.04"),
+            vm_size=_POOL_VM_SIZE,
+            target_dedicated_nodes=_POOL_NODE_COUNT,
+            start_task=batchmodels.StartTask(
+                command_line="/bin/bash -c \"sudo apt-get update && sudo apt-get -y install python3-pip build-essential libssl-dev libffi-dev python3-dev && sudo pip3 install azure;\"",
+                user_identity=user,
+                wait_for_success=True
+            )
+        )
+        batch_service_client.pool.add(new_pool)
+    except batchmodels.batch_error.BatchErrorException as err:
+        print_batch_exception(err)
+        
 
 
 def create_job(batch_service_client, job_id, pool_id):
@@ -192,7 +215,14 @@ def create_job(batch_service_client, job_id, pool_id):
 
     job = batch.models.JobAddParameter(
         job_id,
-        batch.models.PoolInformation(pool_id=pool_id))
+        batch.models.PoolInformation(pool_id=pool_id),
+        metadata=[
+                    batchmodels.MetadataItem("AZURE_TENANT_ID", _AZURE_TENANT_ID),
+                    batchmodels.MetadataItem("AZURE_SUBSCRIPTION_ID", _AZURE_SUBSCRIPTION_ID),
+                    batchmodels.MetadataItem("AZURE_CLIENT_ID", _AZURE_CLIENT_ID),
+                    batchmodels.MetadataItem("AZURE_CLIENT_OID", _AZURE_CLIENT_OID),
+                    batchmodels.MetadataItem("AZURE_CLIENT_SECRET", _AZURE_CLIENT_SECRET)
+                ])
 
     batch_service_client.job.add(job)
 
@@ -214,18 +244,21 @@ def add_tasks(batch_service_client, job_id, input_files):
 
     tasks = list()
 
-    for idx, input_file in enumerate(input_files): 
-
-        command = "/bin/bash -c \"cat {}\"".format(input_file.file_path)
-        tasks.append(batch.models.TaskAddParameter(
-                id='Task{}'.format(idx),
-                command_line=command,
-                resource_files=[input_file]
-                )
-        )
-
-    batch_service_client.task.add_collection(job_id, tasks)
-
+    command = "/bin/bash -c \"python3 batch_aad_example.py;\""
+    task = batch.models.TaskAddParameter(
+            id='Task{}'.format(1),
+            command_line=command,
+            resource_files=input_files,
+            user_identity=user,
+            authentication_token_settings=batchmodels.AuthenticationTokenSettings(access = [batchmodels.AccessScope.job]),
+            environment_settings=[
+                batchmodels.EnvironmentSetting("AZ_BATCH_ACCOUNT_URL", _BATCH_ACCOUNT_URL),
+                batchmodels.EnvironmentSetting("AZ_KEYVAULT_URL", _AZURE_KEYVAULT_URL),
+                batchmodels.EnvironmentSetting("AZ_KEYVAULT_SECRET_NAME", _AZURE_KEYVAULT_SECRET),
+            ]
+            )
+    batch_service_client.task.add(job_id, task)
+    
     
 
 def wait_for_tasks_to_complete(batch_service_client, job_id, timeout):
@@ -327,14 +360,10 @@ if __name__ == '__main__':
     # don't yet exist.
  
     input_container_name = 'input'
-    blob_client.create_container(input_container_name, fail_on_exist=False)
-
-       
+    blob_client.create_container(input_container_name, fail_on_exist=False) 
 
     # The collection of data files that are to be processed by the tasks.
-    input_file_paths = [os.path.realpath('./taskdata0.txt'),
-                        os.path.realpath('./taskdata1.txt'),
-                        os.path.realpath('./taskdata2.txt')]
+    input_file_paths = [os.path.realpath("./batch_aad_example.py")]
 
     # Upload the data files. 
     input_files = [
@@ -346,11 +375,9 @@ if __name__ == '__main__':
     # service in addition to Storage
     credentials = batchauth.SharedKeyCredentials(_BATCH_ACCOUNT_NAME,
                                                  _BATCH_ACCOUNT_KEY)
-
     batch_client = batch.BatchServiceClient(
         credentials,
         base_url=_BATCH_ACCOUNT_URL)
-
      
 
     try:
